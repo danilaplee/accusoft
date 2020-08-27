@@ -2,39 +2,62 @@ const express = require('express');
 const router = express.Router();
 const joinPath = require('path').join;
 const fs = require('fs');
+const path = require('path')
+const sanitize = require('sanitize-html')
 const promisify = require('util').promisify;
 const readFile = promisify(fs.readFile);
 const pas = require('../pas/pasRequest');
 
-// The document we will display
-const DOCUMENT_NAME = 'example.pdf';
-
 router.get('/', async (req, res /*, next*/) => {
-  let prizmdocRes;
 
-  // 1. Create a new viewing session
-  prizmdocRes = await pas.post('/ViewingSession', { // See https://help.accusoft.com/PrizmDoc/v13.5/HTML/webframe.html#pas-viewing-sessions.html
+  const fileList = fs.readdirSync(path.resolve('./documents'))
+
+  res.render('index', {
+    title: 'Hello PrizmDoc Viewer!',
+    fileList
+  });
+
+
+});
+
+router.get('/viewFile/:fileName', async (req, res)=>{
+
+  const fileName = req.params.fileName
+  const file = await(readFileFromDocumentsDirectory(fileName))
+  let html = file.toString();
+  try {
+    html = sanitize(html, {
+      allowedSchemes: [ 'data' ],
+      allowedTags: [ 
+        'h3', 'h4', 'h5', 'h6', 'blockquote', 'p', 'a', 'ul', 'ol',
+        'nl', 'li', 'b', 'i', 'strong', 'em', 'strike', 'abbr', 'code', 'hr', 'br', 'div',
+        'table', 'thead', 'caption', 'tbody', 'tr', 'th', 'td', 'pre'
+      ],
+      allowProtocolRelative: false
+    })
+  }
+  catch(err) {
+    console.error(err)
+  }
+
+  let prizmdocRes = await pas.post('/ViewingSession', { // See https://help.accusoft.com/PrizmDoc/v13.5/HTML/webframe.html#pas-viewing-sessions.html
     json: {
       source: {
         type: 'upload',
-        displayName: DOCUMENT_NAME
+        displayName: fileName
       }
     }
   });
+  
   const viewingSessionId = prizmdocRes.body.viewingSessionId;
 
-  // 2. Send the viewingSessionId and viewer assets to the browser right away so the viewer UI can start loading.
-  res.render('index', {
-    title: 'Hello PrizmDoc Viewer!',
-    viewingSessionId: viewingSessionId
+  prizmdocRes = await pas.put(`/ViewingSession/u${viewingSessionId}/SourceFile`, {
+    body: Buffer.from(html)
   });
 
-  // 3. Upload the source document to PrizmDoc so that it can start being converted to SVG.
-  //    The viewer will request this content and receive it automatically once it is ready.
-  prizmdocRes = await pas.put(`/ViewingSession/u${viewingSessionId}/SourceFile`, {
-    body: await(readFileFromDocumentsDirectory(DOCUMENT_NAME))
-  });
-});
+  return res.send({viewingSessionId})
+})
+
 
 // Util function to read a document from the documents/ directory
 async function readFileFromDocumentsDirectory(filename) {
